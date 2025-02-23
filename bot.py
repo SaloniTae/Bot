@@ -14,6 +14,12 @@ API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
+
+# Debug: Print environment variables
+print("\n=== ENV VARIABLE CHECK ===")
+print(f"API_ID exists: {'API_ID' in os.environ}")
+print(f"API_HASH exists: {'API_HASH' in os.environ}")
+print(f"BOT_TOKEN exists: {'BOT_TOKEN' in os.environ}\n")
 # Validate environment variables
 if not all([API_ID, API_HASH, BOT_TOKEN]):
     raise EnvironmentError(
