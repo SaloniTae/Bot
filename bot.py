@@ -1,6 +1,7 @@
 import time
 import logging
 import random
+import os
 from queue import Queue
 from threading import Thread
 from datetime import datetime, timedelta
@@ -22,6 +23,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Client("OTT_Bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Message queue for rate limiting
 message_queue = Queue()
