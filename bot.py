@@ -1,19 +1,18 @@
 import time
 import logging
-import random
 import os
 from queue import Queue
-from threading import Thread, Timer
+from threading import Thread
 from datetime import datetime, timedelta
 import pytz
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
 
-# Bot Configuration
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Get credentials from environment variables
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # Configure logging
 logging.basicConfig(
@@ -22,7 +21,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Client("OTT_Bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Initialize Pyrogram Client
+app = Client(
+    "OTT_Bot",
+    api_id=int(API_ID),
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
 
 # Message queue for rate limiting (stores function + args + kwargs)
 message_queue = Queue()
