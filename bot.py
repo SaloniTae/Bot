@@ -9,10 +9,16 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
 
-# Get credentials from environment variables
+# ================== CONFIGURATION ==================
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+# Validate environment variables
+if not all([API_ID, API_HASH, BOT_TOKEN]):
+    raise EnvironmentError(
+        "Missing Telegram credentials! Set API_ID, API_HASH, BOT_TOKEN in environment variables."
+    )
 
 # Configure logging
 logging.basicConfig(
@@ -21,13 +27,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Pyrogram Client
+# Initialize Pyrogram client
 app = Client(
     "OTT_Bot",
-    api_id=int(API_ID),
+    api_id=int(API_ID),  # Convert API_ID to integer
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
+
+# ... [REST OF YOUR CODE REMAINS UNCHANGED] ...
+
 
 # Message queue for rate limiting (stores function + args + kwargs)
 message_queue = Queue()
