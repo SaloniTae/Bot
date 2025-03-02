@@ -6,17 +6,32 @@ from datetime import datetime, timedelta
 import pytz
 import requests
 import json
+from flask import Flask
+import threading
 
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
 
+app = Flask(__name__)
 # --------------------- Bot Configuration ---------------------
 API_ID = "27708983"
 API_HASH = "d0c88b417406f93aa913ecb5f1b58ba6"
 BOT_TOKEN = "7642832201:AAGP6ij38eEy9pIaAFTAsehUP_j2jl9Knx0"
 
+app = Flask(__name__)
 
+@app.route("/")
+def index():
+    return "Hello, world!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8000)
+
+# Start the Flask server in a separate thread
+threading.Thread(target=run_flask).start()
+
+# Your Telegram bot code continues here...
 # --------------------- PROXY CONFIG ---------------------
 PROXY_URL = "https://update-slot-service.onrender.com"  # your proxy
 SECRET_TOKEN = "e971197a2f10afe00b826ae6982be6118c525cb1c2905808a0cbf6bafd4eb8cfd114d90724bbbcd6a932f783524eaa75bd3d2db2a81a65f8d64a4ffa23f237ed252ff46959dbb4a8441b8675b2c800d1074ae7398b5eeb897fd0fd74054b5bcf1a9e9f45d4a3c8436677e37fc8e0258f311a83cb85f5922ab03b4f35161b365159ee967bc38f7138153060d850a60224e9a6f72fc946158baf47c1a6b13876ba06fd061680a2941dffc7ec9d618a8e757e182ac223a1bba4062c10f66cacdba1b2363ed1a6d87494bf6f3e86cea82b6205e39ce863e3542204bb327e374c8a301e3941ae0a7efefd68df197b80e80f52463ba6d436d917e892115ea326eaa6ac8902c569e7d611d6e430080b7d826466f647ee06f9d25c75b0d3c6787fa246cdb6d45cce7197b90f4d33f04a3f9917db4b2b451271467317b69cac9170024625"
