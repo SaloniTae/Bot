@@ -149,6 +149,10 @@ async def broadcast_routine(broadcast_content):
     return summary
 
 # ---------------- FLASK ENDPOINT ----------------
+@flask_app.route("/ping", methods=["GET"])
+def keep_alive():
+    return jsonify({"status": "alive"}), 200
+    
 @flask_app.route("/start_broadcast", methods=["POST"])
 def start_broadcast_endpoint():
     """
