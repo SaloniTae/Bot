@@ -1,5 +1,7 @@
-Pyrogram==2.0.106                           
-pytz==2025.1                                
-Requests==2.32.3
-Flask==2.0.3
-tgcrypto==1.2.3
+Flask
+pyrogram
+TgCrypto
+requests
+pytz
+aiofiles
+aiohttp
