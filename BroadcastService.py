@@ -168,7 +168,7 @@ def start_broadcast_endpoint():
     return jsonify({"status": "Broadcast started"}), 200
 
 # ---------------- FLASK KEEP-ALIVE ENDPOINT ----------------
-@app.route("/ping", methods=["GET"])
+@flask_app.route("/ping", methods=["GET"])
 def ping():
     return jsonify({"status": "alive"}), 200
 
