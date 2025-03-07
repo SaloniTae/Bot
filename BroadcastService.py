@@ -8,6 +8,7 @@ import string
 import time
 import traceback
 from threading import Thread
+import os
 
 import aiofiles
 import aiohttp
@@ -26,7 +27,7 @@ BATCH_SIZE = 1000
 flask_app = Flask(__name__)
 
 # ---------------- PYROGRAM CLIENT SETUP ----------------
-# This client is used solely for broadcast processing.
+# Create a global Pyrogram client and start it at startup.
 pyro_app = Client("broadcast_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ---------------- GLOBAL STATE ----------------
@@ -45,7 +46,6 @@ async def fetch_recipients():
             if data is None:
                 return []
             try:
-                # Firebase returns a dictionary with user IDs as keys
                 return [int(uid) for uid in data.keys()]
             except Exception as e:
                 print("Error processing recipients data:", e)
@@ -106,7 +106,6 @@ async def broadcast_routine(broadcast_content):
     success = 0
     failed = 0
     start_time = time.time()
-    # Generate a unique broadcast id for tracking.
     broadcast_id = "".join(random.choice(string.ascii_letters) for _ in range(3))
     log_lines = []
     for batch_start in range(0, total_users, BATCH_SIZE):
@@ -122,10 +121,10 @@ async def broadcast_routine(broadcast_content):
             done += 1
             if done % 10 == 0 or done == total_users:
                 elapsed = time.time() - start_time
-                avg_time = elapsed / done if done else 0
+                avg_time = elapsed/done if done else 0
                 remaining = (total_users - done) * avg_time
                 print(f"[{broadcast_id}] Progress: {done}/{total_users} ({(done/total_users)*100:.2f}%), Success: {success}, Failed: {failed}, Elapsed: {int(elapsed)}s, Remaining: {int(remaining)}s")
-        await asyncio.sleep(3)  # Pause between batches.
+        await asyncio.sleep(3)
     completed_in = time.time() - start_time
     log_filename = f"broadcast_{broadcast_id}.txt"
     async with aiofiles.open(log_filename, "w") as log_file:
@@ -142,27 +141,14 @@ async def broadcast_routine(broadcast_content):
         os.remove(log_filename)
     return summary
 
-# ---------------- HELPER: RUN COROUTINE IN NEW EVENT LOOP ----------------
-def run_async(coro):
-    new_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(new_loop)
-    result = new_loop.run_until_complete(coro)
-    new_loop.close()
-    return result
-
 # ---------------- FLASK ENDPOINTS ----------------
 
 @flask_app.route("/start_broadcast", methods=["POST"])
 def start_broadcast_endpoint():
-    """
-    Expects JSON data with broadcast content (e.g. {"user_id": 7506651658, "text": "Hello everyone!", "media": "file_id_here"}).
-    Saves the pending broadcast and sends a confirmation UI to the admin.
-    """
     data = request.json
     user_id = data.get("user_id")
     if not user_id or "text" not in data:
         return jsonify({"error": "Missing required parameters."}), 400
-
     pending_broadcast[user_id] = {"text": data["text"], "media": data.get("media")}
     
     async def send_confirmation():
@@ -175,28 +161,21 @@ def start_broadcast_endpoint():
             text="Do you want to broadcast this message to all recipients?\nClick Confirm or Cancel.",
             reply_markup=types.InlineKeyboardMarkup(keyboard)
         )
-    run_async(send_confirmation())
+    asyncio.run_coroutine_threadsafe(send_confirmation(), pyro_app.loop).result()
     return jsonify({"status": "Pending confirmation"}), 200
 
 @flask_app.route("/confirm_broadcast", methods=["POST"])
 def confirm_broadcast_endpoint():
-    """
-    Expects JSON data with {"user_id": admin_id} to confirm and start the broadcast.
-    """
     data = request.json
     user_id = data.get("user_id")
     if not user_id or user_id not in pending_broadcast:
         return jsonify({"error": "No pending broadcast for this user."}), 400
-
     broadcast_content = pending_broadcast.pop(user_id)
-    summary = run_async(broadcast_routine(broadcast_content))
+    summary = asyncio.run_coroutine_threadsafe(broadcast_routine(broadcast_content), pyro_app.loop).result()
     return jsonify({"status": "Broadcast completed", "summary": summary}), 200
 
 @flask_app.route("/cancel_broadcast", methods=["POST"])
 def cancel_broadcast_endpoint():
-    """
-    Expects JSON data with {"user_id": admin_id} to cancel the pending broadcast.
-    """
     data = request.json
     user_id = data.get("user_id")
     if user_id in pending_broadcast:
