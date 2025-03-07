@@ -27,7 +27,7 @@ BATCH_SIZE = 1000
 flask_app = Flask(__name__)
 
 # ---------------- PYROGRAM CLIENT SETUP ----------------
-# Create a global Pyrogram client and start it at startup.
+# Create a global Pyrogram client.
 pyro_app = Client("broadcast_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ---------------- GLOBAL STATE ----------------
@@ -95,11 +95,6 @@ async def send_msg(user_id, content):
 
 # ---------------- BROADCAST ROUTINE ----------------
 async def broadcast_routine(broadcast_content):
-    """
-    Broadcasts the provided content to all recipients.
-    'broadcast_content' is a dict containing at least a "text" field, optionally a "media" field.
-    Returns a summary dictionary.
-    """
     recipients = await fetch_recipients()
     total_users = len(recipients)
     done = 0
@@ -149,6 +144,7 @@ def start_broadcast_endpoint():
     user_id = data.get("user_id")
     if not user_id or "text" not in data:
         return jsonify({"error": "Missing required parameters."}), 400
+
     pending_broadcast[user_id] = {"text": data["text"], "media": data.get("media")}
     
     async def send_confirmation():
@@ -161,6 +157,7 @@ def start_broadcast_endpoint():
             text="Do you want to broadcast this message to all recipients?\nClick Confirm or Cancel.",
             reply_markup=types.InlineKeyboardMarkup(keyboard)
         )
+    # Schedule send_confirmation on the already running pyro_app loop.
     asyncio.run_coroutine_threadsafe(send_confirmation(), pyro_app.loop).result()
     return jsonify({"status": "Pending confirmation"}), 200
 
@@ -170,6 +167,7 @@ def confirm_broadcast_endpoint():
     user_id = data.get("user_id")
     if not user_id or user_id not in pending_broadcast:
         return jsonify({"error": "No pending broadcast for this user."}), 400
+
     broadcast_content = pending_broadcast.pop(user_id)
     summary = asyncio.run_coroutine_threadsafe(broadcast_routine(broadcast_content), pyro_app.loop).result()
     return jsonify({"status": "Broadcast completed", "summary": summary}), 200
@@ -189,7 +187,7 @@ def ping():
 # ---------------- START FLASK SERVER ----------------
 if __name__ == "__main__":
     print("Starting Pyrogram client...")
-    pyro_app.start()
+    pyro_app.start()  # Start the client before handling any requests.
     print("Broadcast Service started at http://0.0.0.0:5001")
     flask_app.run(host="0.0.0.0", port=5001)
     pyro_app.stop()
