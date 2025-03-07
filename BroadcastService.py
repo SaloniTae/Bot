@@ -1,5 +1,3 @@
-# BroadcastService.py
-
 import asyncio
 import datetime
 import os
@@ -27,7 +25,7 @@ BATCH_SIZE = 1000
 flask_app = Flask(__name__)
 
 # ---------------- PYROGRAM CLIENT SETUP ----------------
-# This Pyrogram client is used exclusively for broadcast processing.
+# This Pyrogram client is used solely for broadcast processing.
 pyro_app = Client("broadcast_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ---------------- GLOBAL STATE ----------------
@@ -68,7 +66,6 @@ async def send_msg(client, user_id, content_msg):
                     text=content_msg.get("text", "")
                 )
         else:
-            # Forwarding would require an original message context.
             if content_msg.get("media"):
                 await client.send_photo(
                     chat_id=user_id,
@@ -99,7 +96,7 @@ async def send_msg(client, user_id, content_msg):
 async def broadcast_routine(broadcast_content):
     """
     Broadcasts the provided content to all recipients.
-    broadcast_content: a dict containing at least a "text" field, and optionally a "media" field.
+    broadcast_content: a dict containing at least a "text" field, optionally a "media" field.
     Returns a summary dictionary.
     """
     recipients = await fetch_recipients()
@@ -126,7 +123,7 @@ async def broadcast_routine(broadcast_content):
                 # Print progress to the console every 10 messages.
                 if done % 10 == 0 or done == total_users:
                     elapsed = time.time() - start_time
-                    avg_time = elapsed / done if done else 0
+                    avg_time = elapsed/done if done else 0
                     remaining = (total_users - done) * avg_time
                     print(f"[{broadcast_id}] Progress: {done}/{total_users} ({(done/total_users)*100:.2f}%), Success: {success}, Failed: {failed}, Elapsed: {int(elapsed)}s, Remaining: {int(remaining)}s")
             await asyncio.sleep(3)  # Pause between batches.
@@ -147,23 +144,29 @@ async def broadcast_routine(broadcast_content):
         os.remove(log_filename)
     return summary
 
+# ---------------- HELPER: RUN COROUTINE IN NEW EVENT LOOP ----------------
+def run_async(coro):
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+    result = new_loop.run_until_complete(coro)
+    new_loop.close()
+    return result
+
 # ---------------- FLASK ENDPOINTS ----------------
 
 @flask_app.route("/start_broadcast", methods=["POST"])
 def start_broadcast_endpoint():
     """
     Expects JSON data with broadcast content (e.g. {"user_id": 7506651658, "text": "Hello everyone!", "media": "file_id_here"}).
-    It saves the broadcast content as pending and sends a confirmation UI to the admin.
+    Saves the pending broadcast and sends a confirmation UI to the admin.
     """
     data = request.json
     user_id = data.get("user_id")
     if not user_id or "text" not in data:
         return jsonify({"error": "Missing required parameters."}), 400
 
-    # Save the pending broadcast for this admin.
     pending_broadcast[user_id] = {"text": data["text"], "media": data.get("media")}
     
-    # Send a confirmation message to the admin using Pyrogram.
     async def send_confirmation():
         async with pyro_app:
             keyboard = [
@@ -175,7 +178,8 @@ def start_broadcast_endpoint():
                 text="Do you want to broadcast this message to all recipients?\nClick Confirm or Cancel.",
                 reply_markup=types.InlineKeyboardMarkup(keyboard)
             )
-    asyncio.run(send_confirmation())
+    # Use our helper to run the coroutine in a new event loop.
+    run_async(send_confirmation())
     return jsonify({"status": "Pending confirmation"}), 200
 
 @flask_app.route("/confirm_broadcast", methods=["POST"])
@@ -189,7 +193,7 @@ def confirm_broadcast_endpoint():
         return jsonify({"error": "No pending broadcast for this user."}), 400
 
     broadcast_content = pending_broadcast.pop(user_id)
-    summary = asyncio.run(broadcast_routine(broadcast_content))
+    summary = run_async(broadcast_routine(broadcast_content))
     return jsonify({"status": "Broadcast completed", "summary": summary}), 200
 
 @flask_app.route("/cancel_broadcast", methods=["POST"])
