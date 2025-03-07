@@ -1,3 +1,6 @@
+import nest_asyncio
+nest_asyncio.apply()
+
 import asyncio
 import datetime
 import os
@@ -25,7 +28,7 @@ BATCH_SIZE = 1000
 flask_app = Flask(__name__)
 
 # ---------------- PYROGRAM CLIENT SETUP ----------------
-# This Pyrogram client is used solely for broadcast processing.
+# This client is used solely for broadcast processing.
 pyro_app = Client("broadcast_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ---------------- GLOBAL STATE ----------------
@@ -128,7 +131,6 @@ async def broadcast_routine(broadcast_content):
                     print(f"[{broadcast_id}] Progress: {done}/{total_users} ({(done/total_users)*100:.2f}%), Success: {success}, Failed: {failed}, Elapsed: {int(elapsed)}s, Remaining: {int(remaining)}s")
             await asyncio.sleep(3)  # Pause between batches.
     completed_in = time.time() - start_time
-    # Optionally, write error log to a file.
     log_filename = f"broadcast_{broadcast_id}.txt"
     async with aiofiles.open(log_filename, "w") as log_file:
         await log_file.write("\n".join(log_lines))
@@ -178,7 +180,6 @@ def start_broadcast_endpoint():
                 text="Do you want to broadcast this message to all recipients?\nClick Confirm or Cancel.",
                 reply_markup=types.InlineKeyboardMarkup(keyboard)
             )
-    # Use our helper to run the coroutine in a new event loop.
     run_async(send_confirmation())
     return jsonify({"status": "Pending confirmation"}), 200
 
