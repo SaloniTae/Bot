@@ -3,12 +3,10 @@ nest_asyncio.apply()
 
 import asyncio
 import datetime
-import os
 import random
 import string
 import time
 import traceback
-import json
 from threading import Thread
 
 import aiofiles
@@ -18,9 +16,9 @@ from pyrogram import Client, types
 from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, PeerIdInvalid
 
 # ---------------- CONFIGURATION ----------------
-API_ID = os.getenv("API_ID", "25270711")
-API_HASH = os.getenv("API_HASH", "6bf18f3d9519a2de12ac1e2e0f5c383e")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7140092976:AAFtmOBKi-mIoVighcf4XXassHimU2CtlR8")
+API_ID = "25270711" 
+API_HASH = "6bf18f3d9519a2de12ac1e2e0f5c383e"
+BOT_TOKEN = "7140092976:AAFtmOBKi-mIoVighcf4XXassHimU2CtlR8"
 BROADCAST_AS_COPY = True
 BATCH_SIZE = 1000
 
@@ -32,7 +30,7 @@ flask_app = Flask(__name__)
 pyro_app = Client("broadcast_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ---------------- GLOBAL STATE ----------------
-pending_broadcast = {}         # { admin_id: message (content) }
+pending_broadcast = {}         # { admin_id: broadcast content dict }
 cancel_broadcast_flag = {}     # { admin_id: bool }
 
 # ---------------- UTILITY FUNCTION TO FETCH RECIPIENTS FROM FIREBASE ----------------
@@ -54,38 +52,38 @@ async def fetch_recipients():
                 return []
 
 # ---------------- ADVANCED SEND FUNCTION ----------------
-async def send_msg(client, user_id, content_msg):
+async def send_msg(user_id, content):
     try:
         if BROADCAST_AS_COPY:
-            if content_msg.get("media"):
-                await client.send_photo(
+            if content.get("media"):
+                await pyro_app.send_photo(
                     chat_id=user_id,
-                    photo=content_msg["media"],
-                    caption=content_msg.get("text", "")
+                    photo=content["media"],
+                    caption=content.get("text", "")
                 )
             else:
-                await client.send_message(
+                await pyro_app.send_message(
                     chat_id=user_id,
-                    text=content_msg.get("text", "")
+                    text=content.get("text", "")
                 )
         else:
-            if content_msg.get("media"):
-                await client.send_photo(
+            if content.get("media"):
+                await pyro_app.send_photo(
                     chat_id=user_id,
-                    photo=content_msg["media"],
-                    caption=content_msg.get("text", "")
+                    photo=content["media"],
+                    caption=content.get("text", "")
                 )
             else:
-                await client.send_message(
+                await pyro_app.send_message(
                     chat_id=user_id,
-                    text=content_msg.get("text", "")
+                    text=content.get("text", "")
                 )
         return 200, None
 
     except FloodWait as e:
         print(f"FloodWait: Sleeping for {e.x} seconds for user {user_id}.")
         await asyncio.sleep(e.x)
-        return await send_msg(client, user_id, content_msg)
+        return await send_msg(user_id, content)
     except InputUserDeactivated:
         return 400, f"{user_id} : deactivated"
     except UserIsBlocked:
@@ -99,7 +97,7 @@ async def send_msg(client, user_id, content_msg):
 async def broadcast_routine(broadcast_content):
     """
     Broadcasts the provided content to all recipients.
-    broadcast_content: a dict containing at least a "text" field, optionally a "media" field.
+    'broadcast_content' is a dict containing at least a "text" field, optionally a "media" field.
     Returns a summary dictionary.
     """
     recipients = await fetch_recipients()
@@ -111,25 +109,23 @@ async def broadcast_routine(broadcast_content):
     # Generate a unique broadcast id for tracking.
     broadcast_id = "".join(random.choice(string.ascii_letters) for _ in range(3))
     log_lines = []
-    async with pyro_app:
-        for batch_start in range(0, total_users, BATCH_SIZE):
-            batch = recipients[batch_start: batch_start+BATCH_SIZE]
-            for user in batch:
-                sts, err_msg = await send_msg(pyro_app, user, broadcast_content)
-                if err_msg is not None:
-                    log_lines.append(err_msg)
-                if sts == 200:
-                    success += 1
-                else:
-                    failed += 1
-                done += 1
-                # Print progress to the console every 10 messages.
-                if done % 10 == 0 or done == total_users:
-                    elapsed = time.time() - start_time
-                    avg_time = elapsed/done if done else 0
-                    remaining = (total_users - done) * avg_time
-                    print(f"[{broadcast_id}] Progress: {done}/{total_users} ({(done/total_users)*100:.2f}%), Success: {success}, Failed: {failed}, Elapsed: {int(elapsed)}s, Remaining: {int(remaining)}s")
-            await asyncio.sleep(3)  # Pause between batches.
+    for batch_start in range(0, total_users, BATCH_SIZE):
+        batch = recipients[batch_start: batch_start+BATCH_SIZE]
+        for user in batch:
+            sts, err_msg = await send_msg(user, broadcast_content)
+            if err_msg is not None:
+                log_lines.append(err_msg)
+            if sts == 200:
+                success += 1
+            else:
+                failed += 1
+            done += 1
+            if done % 10 == 0 or done == total_users:
+                elapsed = time.time() - start_time
+                avg_time = elapsed / done if done else 0
+                remaining = (total_users - done) * avg_time
+                print(f"[{broadcast_id}] Progress: {done}/{total_users} ({(done/total_users)*100:.2f}%), Success: {success}, Failed: {failed}, Elapsed: {int(elapsed)}s, Remaining: {int(remaining)}s")
+        await asyncio.sleep(3)  # Pause between batches.
     completed_in = time.time() - start_time
     log_filename = f"broadcast_{broadcast_id}.txt"
     async with aiofiles.open(log_filename, "w") as log_file:
@@ -170,16 +166,15 @@ def start_broadcast_endpoint():
     pending_broadcast[user_id] = {"text": data["text"], "media": data.get("media")}
     
     async def send_confirmation():
-        async with pyro_app:
-            keyboard = [
-                [types.InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_broadcast_{user_id}")],
-                [types.InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast_{user_id}")]
-            ]
-            await pyro_app.send_message(
-                chat_id=user_id,
-                text="Do you want to broadcast this message to all recipients?\nClick Confirm or Cancel.",
-                reply_markup=types.InlineKeyboardMarkup(keyboard)
-            )
+        keyboard = [
+            [types.InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_broadcast_{user_id}")],
+            [types.InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast_{user_id}")]
+        ]
+        await pyro_app.send_message(
+            chat_id=user_id,
+            text="Do you want to broadcast this message to all recipients?\nClick Confirm or Cancel.",
+            reply_markup=types.InlineKeyboardMarkup(keyboard)
+        )
     run_async(send_confirmation())
     return jsonify({"status": "Pending confirmation"}), 200
 
@@ -214,5 +209,8 @@ def ping():
 
 # ---------------- START FLASK SERVER ----------------
 if __name__ == "__main__":
+    print("Starting Pyrogram client...")
+    pyro_app.start()
     print("Broadcast Service started at http://0.0.0.0:5001")
     flask_app.run(host="0.0.0.0", port=5001)
+    pyro_app.stop()
