@@ -17,20 +17,24 @@ from pyrogram import Client, types
 from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, PeerIdInvalid
 
 # ---------------- CONFIGURATION ----------------
-API_ID = "25270711"
-API_HASH = "6bf18f3d9519a2de12ac1e2e0f5c383e"
-BOT_TOKEN = "7140092976:AAFtmOBKi-mIoVighcf4XXassHimU2CtlR8"
-BROADCAST_AS_COPY = True  # If True, messages are sent as a copy (not forwarded)
+API_ID = os.getenv("API_ID", "25270711")
+API_HASH = os.getenv("API_HASH", "6bf18f3d9519a2de12ac1e2e0f5c383e")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7140092976:AAFtmOBKi-mIoVighcf4XXassHimU2CtlR8")
+BROADCAST_AS_COPY = True
 BATCH_SIZE = 1000
 
 # ---------------- FLASK APP SETUP ----------------
 flask_app = Flask(__name__)
 
 # ---------------- PYROGRAM CLIENT SETUP ----------------
-# We create a Pyrogram client that will be used solely for broadcasting.
-pyro_app = Client("broadcast_service", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# This Pyrogram client is used exclusively for broadcast processing.
+pyro_app = Client("broadcast_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# ---------------- UTILITY: Fetch Recipients from Firebase ----------------
+# ---------------- GLOBAL STATE ----------------
+pending_broadcast = {}         # { admin_id: message (content) }
+cancel_broadcast_flag = {}     # { admin_id: bool }
+
+# ---------------- UTILITY FUNCTION TO FETCH RECIPIENTS FROM FIREBASE ----------------
 async def fetch_recipients():
     firebase_url = "https://get-crunchy-credentials-default-rtdb.firebaseio.com/users.json"
     async with aiohttp.ClientSession() as session:
@@ -42,51 +46,46 @@ async def fetch_recipients():
             if data is None:
                 return []
             try:
-                # Firebase returns a dictionary with user IDs as keys.
+                # Firebase returns a dictionary with user IDs as keys
                 return [int(uid) for uid in data.keys()]
             except Exception as e:
                 print("Error processing recipients data:", e)
                 return []
 
 # ---------------- ADVANCED SEND FUNCTION ----------------
-async def send_msg(client, user_id, content):
-    """
-    Sends a message (text or media) to a given user_id.
-    The 'content' parameter is expected to be a dictionary with a key "text" and optionally "media" (a file_id).
-    """
+async def send_msg(client, user_id, content_msg):
     try:
         if BROADCAST_AS_COPY:
-            if "media" in content:
+            if content_msg.get("media"):
                 await client.send_photo(
                     chat_id=user_id,
-                    photo=content["media"],
-                    caption=content.get("text", "")
+                    photo=content_msg["media"],
+                    caption=content_msg.get("text", "")
                 )
             else:
                 await client.send_message(
                     chat_id=user_id,
-                    text=content.get("text", "")
+                    text=content_msg.get("text", "")
                 )
         else:
-            # If not using copy, you might forward a message—but without an original chat context,
-            # it’s simpler to also send a new message.
-            if "media" in content:
+            # Forwarding would require an original message context.
+            if content_msg.get("media"):
                 await client.send_photo(
                     chat_id=user_id,
-                    photo=content["media"],
-                    caption=content.get("text", "")
+                    photo=content_msg["media"],
+                    caption=content_msg.get("text", "")
                 )
             else:
                 await client.send_message(
                     chat_id=user_id,
-                    text=content.get("text", "")
+                    text=content_msg.get("text", "")
                 )
         return 200, None
 
     except FloodWait as e:
         print(f"FloodWait: Sleeping for {e.x} seconds for user {user_id}.")
         await asyncio.sleep(e.x)
-        return await send_msg(client, user_id, content)
+        return await send_msg(client, user_id, content_msg)
     except InputUserDeactivated:
         return 400, f"{user_id} : deactivated"
     except UserIsBlocked:
@@ -100,7 +99,7 @@ async def send_msg(client, user_id, content):
 async def broadcast_routine(broadcast_content):
     """
     Broadcasts the provided content to all recipients.
-    broadcast_content: a dict containing at least a "text" field, optionally a "media" field.
+    broadcast_content: a dict containing at least a "text" field, and optionally a "media" field.
     Returns a summary dictionary.
     """
     recipients = await fetch_recipients()
@@ -109,7 +108,7 @@ async def broadcast_routine(broadcast_content):
     success = 0
     failed = 0
     start_time = time.time()
-    # Generate a unique broadcast id for tracking in logs.
+    # Generate a unique broadcast id for tracking.
     broadcast_id = "".join(random.choice(string.ascii_letters) for _ in range(3))
     log_lines = []
     async with pyro_app:
@@ -127,7 +126,7 @@ async def broadcast_routine(broadcast_content):
                 # Print progress to the console every 10 messages.
                 if done % 10 == 0 or done == total_users:
                     elapsed = time.time() - start_time
-                    avg_time = elapsed/done if done else 0
+                    avg_time = elapsed / done if done else 0
                     remaining = (total_users - done) * avg_time
                     print(f"[{broadcast_id}] Progress: {done}/{total_users} ({(done/total_users)*100:.2f}%), Success: {success}, Failed: {failed}, Elapsed: {int(elapsed)}s, Remaining: {int(remaining)}s")
             await asyncio.sleep(3)  # Pause between batches.
@@ -148,31 +147,67 @@ async def broadcast_routine(broadcast_content):
         os.remove(log_filename)
     return summary
 
-# ---------------- FLASK ENDPOINT ----------------
+# ---------------- FLASK ENDPOINTS ----------------
+
 @flask_app.route("/start_broadcast", methods=["POST"])
 def start_broadcast_endpoint():
     """
-    Expects JSON data with broadcast content (e.g. {"text": "Hello everyone!"}).
-    Triggers the broadcast routine in a background thread.
+    Expects JSON data with broadcast content (e.g. {"user_id": 7506651658, "text": "Hello everyone!", "media": "file_id_here"}).
+    It saves the broadcast content as pending and sends a confirmation UI to the admin.
     """
     data = request.json
-    if not data or "text" not in data:
-        return jsonify({"error": "Invalid broadcast content. Must include at least 'text'."}), 400
+    user_id = data.get("user_id")
+    if not user_id or "text" not in data:
+        return jsonify({"error": "Missing required parameters."}), 400
 
-    def run_broadcast():
-        summary = asyncio.run(broadcast_routine(data))
-        print("Broadcast summary:", summary)
+    # Save the pending broadcast for this admin.
+    pending_broadcast[user_id] = {"text": data["text"], "media": data.get("media")}
+    
+    # Send a confirmation message to the admin using Pyrogram.
+    async def send_confirmation():
+        async with pyro_app:
+            keyboard = [
+                [types.InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_broadcast_{user_id}")],
+                [types.InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast_{user_id}")]
+            ]
+            await pyro_app.send_message(
+                chat_id=user_id,
+                text="Do you want to broadcast this message to all recipients?\nClick Confirm or Cancel.",
+                reply_markup=types.InlineKeyboardMarkup(keyboard)
+            )
+    asyncio.run(send_confirmation())
+    return jsonify({"status": "Pending confirmation"}), 200
 
-    # Start the broadcast routine in a separate thread so the HTTP request returns immediately.
-    Thread(target=run_broadcast).start()
-    return jsonify({"status": "Broadcast started"}), 200
+@flask_app.route("/confirm_broadcast", methods=["POST"])
+def confirm_broadcast_endpoint():
+    """
+    Expects JSON data with {"user_id": admin_id} to confirm and start the broadcast.
+    """
+    data = request.json
+    user_id = data.get("user_id")
+    if not user_id or user_id not in pending_broadcast:
+        return jsonify({"error": "No pending broadcast for this user."}), 400
 
-# ---------------- FLASK KEEP-ALIVE ENDPOINT ----------------
+    broadcast_content = pending_broadcast.pop(user_id)
+    summary = asyncio.run(broadcast_routine(broadcast_content))
+    return jsonify({"status": "Broadcast completed", "summary": summary}), 200
+
+@flask_app.route("/cancel_broadcast", methods=["POST"])
+def cancel_broadcast_endpoint():
+    """
+    Expects JSON data with {"user_id": admin_id} to cancel the pending broadcast.
+    """
+    data = request.json
+    user_id = data.get("user_id")
+    if user_id in pending_broadcast:
+        pending_broadcast.pop(user_id, None)
+    return jsonify({"status": "Broadcast cancelled"}), 200
+
 @flask_app.route("/ping", methods=["GET"])
 def ping():
     return jsonify({"status": "alive"}), 200
 
-# ---------------- START SERVER ----------------
+# ---------------- START FLASK SERVER ----------------
 if __name__ == "__main__":
-    print("Broadcast Service started at http://127.0.0.1:5001")
-    app.run(host="0.0.0.0", port=5001)
+    print("Broadcast Service started at http://0.0.0.0:5001")
+    flask_app.run(host="0.0.0.0", port=5001)
